@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Rate Limiter Service - Demo</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        max-width: 640px;
+        margin: 40px auto;
+        color: #1a1a1a;
+      }
+      h1 {
+        font-size: 1.4rem;
+      }
+      label {
+        display: block;
+        font-size: 13px;
+        color: #555;
+        margin-bottom: 4px;
+        margin-top: 14px;
+      }
+      input {
+        width: 100%;
+        padding: 8px;
+        box-sizing: border-box;
+        border: 1px solid #ccc;
+        border-radius: 6px;
+      }
+      button {
+        margin-top: 16px;
+        margin-right: 8px;
+        padding: 10px 16px;
+        border: none;
+        border-radius: 6px;
+        background: #2563eb;
+        color: white;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button.secondary {
+        background: #6b7280;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      #barTrack {
+        margin-top: 20px;
+        height: 22px;
+        background: #e5e5e5;
+        border-radius: 11px;
+        overflow: hidden;
+      }
+      #barFill {
+        height: 100%;
+        background: #16a34a;
+        transition:
+          width 0.15s,
+          background-color 0.15s;
+        width: 100%;
+      }
+      #barFill.low {
+        background: #dc2626;
+      }
+      #barLabel {
+        margin-top: 6px;
+        font-size: 13px;
+        color: #555;
+      }
+      #log {
+        margin-top: 20px;
+        font-family: ui-monospace, monospace;
+        font-size: 12px;
+        background: #f5f5f5;
+        border-radius: 6px;
+        padding: 10px;
+        max-height: 260px;
+        overflow-y: auto;
+      }
+      .log-allowed {
+        color: #166534;
+      }
+      .log-denied {
+        color: #b91c1c;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Rate Limiter Service Demo</h1>
+
+    <p>
+      Each click calls <code>/check</code> for the client key below. Capacity
+      and refill window are set server-side via env vars — this page just shows
+      the result.
+    </p>
+
+    <label for="apiKey"
+      >API key (only needed if this deployment has
+      <code>API_KEY</code> set):</label
+    >
+    <input id="apiKey" type="text" placeholder="leave blank if not required" />
+
+    <label for="clientKey">Client key:</label>
+    <input id="clientKey" type="text" value="demo-client" />
+
+    <button id="sendOne">Send 1 request</button>
+    <button id="sendBurst" class="secondary">
+      Burst 20 concurrent requests
+    </button>
+
+    <div id="barTrack"><div id="barFill"></div></div>
+    <div id="barLabel">-</div>
+
+    <div id="log"></div>
+
+    <script>
+      const apiKeyInput = document.getElementById("apiKey");
+      const clientKeyInput = document.getElementById("clientKey");
+      const barFill = document.getElementById("barFill");
+      const barLabel = document.getElementById("barLabel");
+      const log = document.getElementById("log");
+
+      function headers() {
+        const k = apiKeyInput.value.trim();
+        return k ? { "X-API-Key": k } : {};
+      }
+
+      function logLine(text, allowed) {
+        const div = document.createElement("div");
+        div.className = allowed ? "log-allowed" : "log-denied";
+        div.textContent = text;
+        log.prepend(div);
+      }
+
+      function updateBar(remaining, limit) {
+        const pct =
+          limit > 0 ? Math.max(0, Math.min(100, (remaining / limit) * 100)) : 0;
+        barFill.style.width = pct + "%";
+        barFill.classList.toggle("low", pct < 25);
+        barLabel.textContent = `${remaining} / ${limit} tokens remaining`;
+      }
+
+      async function checkOnce() {
+        const key = encodeURIComponent(
+          clientKeyInput.value.trim() || "demo-client",
+        );
+        const res = await fetch(`/check?key=${key}`, { headers: headers() });
+        const data = await res.json();
+        updateBar(data.remaining, data.limit);
+        const ts = new Date().toLocaleTimeString();
+        if (data.allowed) {
+          logLine(
+            `[${ts}] ALLOWED - remaining ${data.remaining}/${data.limit}`,
+            true,
+          );
+        } else {
+          logLine(
+            `[${ts}] DENIED (429) - retry after ${data.resetAfterSeconds}s`,
+            false,
+          );
+        }
+        return data;
+      }
+
+      document.getElementById("sendOne").addEventListener("click", () => {
+        checkOnce().catch((err) => logLine("Error: " + err.message, false));
+      });
+
+      document
+        .getElementById("sendBurst")
+        .addEventListener("click", async () => {
+          const promises = Array.from({ length: 20 }, () => checkOnce());
+          await Promise.allSettled(promises);
+        });
+    </script>
+  </body>
+</html>
